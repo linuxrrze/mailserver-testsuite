@@ -98,9 +98,10 @@ tests/
                         RENAMESCRIPT/CHECKSCRIPT/HAVESPACE)
   security/           — TLS version/cipher/cert, unencrypted-auth rejection, brute
                         force (IMAP/SMTP/ManageSieve)
-  proxy/              — greeting stall/HTTP-answer diagnosis (IMAP/SMTP), PROXY-
-                        protocol backend port reachability (opt-in), idle timeout
-                        (opt-in, slow)
+  proxy/              — greeting stall/HTTP-answer diagnosis (IMAP/SMTP),
+                        command-channel integrity (unconsumed PROXY header),
+                        PROXY-protocol backend port reachability (opt-in), idle
+                        timeout (opt-in, slow)
   smtp/               — connectivity, auth, commands (VRFY/EXPN), limits, relay
 ```
 
@@ -130,6 +131,34 @@ tests/
   to it. ManageSieve only skips outright when unconfigured, unresolvable, or
   refused/unreachable. lib/imap and lib/smtp connects also carry a 30 s
   socket timeout so nothing can hang forever.
+- **Command-channel integrity (unconsumed PROXY header)**: the greeting probe
+  alone cannot catch a proxy that forwards with a PROXY-protocol header the
+  backend does not consume — the protocols are server-first, so the greeting
+  still arrives clean, but the leftover header bytes poison the input buffer
+  and the client's *first command* is parsed as garbage and rejected
+  (ManageSieve `NO "Error in … command"` then `BYE "Too many invalid
+  commands."`; SMTP 5xx; IMAP BAD). `tests/proxy/test_command_channel.py`
+  reads the greeting, then sends one benign command (IMAP CAPABILITY / SMTP
+  EHLO / ManageSieve CAPABILITY) and requires a clean acceptance, failing
+  with `lib/probe.DIAG_UNCONSUMED_PROXY`. Plaintext/STARTTLS endpoints only —
+  with implicit TLS the same fault breaks the handshake, which the greeting
+  test reports as `tls_failed`.
+- **Reverse-proxy (Traefik) deployment, two distinct faults these tests find**:
+  1. *STARTTLS behind a TLS-passthrough router* — a STARTTLS service (e.g.
+     ManageSieve :4190, IMAP :143) is server-first and starts in plaintext,
+     so a Traefik TCP router with a TLS section (`tls.passthrough=true`)
+     never matches it: Traefik waits for a TLS ClientHello the client never
+     sends, the client waits for a greeting, and the port hangs (plaintext
+     probes get an HTTP 400). Use a plain-TCP passthrough router (no `tls.*`).
+     Wrapper/implicit-TLS ports (465/993) are client-first and *do* want the
+     TLS-passthrough router. Symptom → caught by the greeting test.
+  2. *PROXY header not consumed by the backend* — if the router forwards with
+     `serversTransport=proxyprotocolv2`, the backend listener must expect it:
+     Dovecot `haproxy = yes` + `haproxy_trusted_networks` (the proxy's source
+     address as the backend sees it, not the client's) on the sieve/imap
+     listeners; Postfix `smtpd_upstream_proxy_protocol=haproxy`. Otherwise the
+     greeting works but the first command is rejected. Symptom → caught by the
+     command-channel test.
 - **TLS server name is configurable**: TLS mail ports may sit behind an
   SNI-routing TLS-passthrough proxy, where the SNI must match the proxy's
   rule even if it differs from the host dialed (a mismatch typically falls

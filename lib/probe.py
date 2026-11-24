@@ -65,6 +65,37 @@ DIAG_CLIENT_FIRST = (
 )
 DIAG_SILENT = "connection accepted but silent"
 
+# A greeting arrives even when a proxy prepends a PROXY-protocol header the
+# backend does not consume (the server is server-first, so it greets before
+# reading the poisoned input buffer). The fault only shows on the *first
+# client command*, which the backend parses together with the leftover header
+# bytes and rejects.
+DIAG_UNCONSUMED_PROXY = (
+    "a valid command was rejected right after the greeting — if this port is behind "
+    "a reverse proxy that prepends a PROXY-protocol header (e.g. Traefik "
+    "serversTransport=proxyprotocolv2), the backend is not consuming it, so the "
+    "header bytes are parsed as protocol commands. Enable PROXY protocol on the "
+    "backend listener for the proxy's address (Dovecot: haproxy=yes + "
+    "haproxy_trusted_networks; Postfix: smtpd_upstream_proxy_protocol=haproxy)."
+)
+
+
+def looks_like_command_rejection(text: str) -> bool:
+    """True if a server message reads like 'that command was invalid/unknown'.
+
+    Used to tell an unconsumed-PROXY-header failure (STARTTLS or the first
+    command rejected as garbage) apart from an ordinary protocol error.
+    """
+    low = text.lower()
+    return any(
+        s in low
+        for s in (
+            "error in", "invalid command", "too many invalid",
+            "unknown command", "syntax error", "unrecognized command",
+            "bad command", "command not",
+        )
+    )
+
 
 def diag_sni(ep: "Endpoint") -> str:
     section = {"imap": "imap", "smtp": "smtp", "managesieve": "managesieve"}[ep.protocol]
@@ -348,6 +379,122 @@ def probe_backend_port(host: str, port: int, timeout: float = 5.0) -> BackendPor
         return BackendPortResult(host, port, True, plain=plain, spoofed=_describe(data), spoof_greeted=greeted)
     finally:
         sock.close()
+
+
+# ---------------------------------------------------------------------------
+# Command-channel integrity (unconsumed PROXY-protocol header)
+# ---------------------------------------------------------------------------
+
+# One benign, unauthenticated command to send right after the greeting, and
+# how to recognise a clean acceptance versus an "invalid command" rejection.
+_CMD_PROBE = {
+    "imap": b"mt01 CAPABILITY\r\n",
+    "smtp": b"EHLO probe.mailserver-testsuite\r\n",
+    "managesieve": b"CAPABILITY\r\n",
+}
+_CMD_ACCEPTED = {
+    "imap": re.compile(rb"^mt01 OK\b", re.IGNORECASE | re.MULTILINE),
+    "smtp": re.compile(rb"^250[ -]", re.MULTILINE),
+    "managesieve": re.compile(rb"^OK\b", re.IGNORECASE | re.MULTILINE),
+}
+
+
+@dataclass
+class CommandChannelResult:
+    endpoint: Endpoint
+    # ok         the first command was accepted cleanly
+    # rejected   the server answered, but not with an acceptance (invalid-command
+    #            errors / BYE — the unconsumed-PROXY-header signature)
+    # silent     greeting was fine but the command drew no reply
+    # closed     the connection dropped on sending the command
+    # deferred   the greeting itself was not usable (the greeting test owns it)
+    status: str
+    greeting: bytes = b""
+    reply: bytes = b""
+    error: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return self.status == "ok"
+
+    @property
+    def diagnosis(self) -> str:
+        ep = self.endpoint
+        if self.status == "ok":
+            return f"{ep}: first command after the greeting was accepted: {_snippet(self.reply)}"
+        if self.status == "rejected":
+            return f"{ep}: {DIAG_UNCONSUMED_PROXY} Got {_snippet(self.reply)}."
+        if self.status == "silent":
+            return (
+                f"{ep}: greeting arrived but a valid command drew no reply "
+                "(a proxy swallowing the client->server stream?)"
+            )
+        if self.status == "closed":
+            return f"{ep}: connection closed on the first command. {DIAG_UNCONSUMED_PROXY}"
+        if self.status == "deferred":
+            return f"{ep}: greeting not usable ({self.error}) — see the greeting test"
+        return f"{ep}: {self.status}: {self.error}"
+
+
+def probe_command_channel(
+    endpoint: Endpoint,
+    ssl_ctx: Optional[ssl.SSLContext] = None,
+    greeting_timeout: float = 5.0,
+    reply_timeout: float = 5.0,
+    connect_timeout: float = 10.0,
+) -> CommandChannelResult:
+    """Read the greeting, then send one benign command and check it is accepted.
+
+    Catches the reverse-proxy failure the greeting probe cannot: a proxy that
+    prepends a PROXY-protocol header the backend does not consume. Because the
+    protocols are server-first, the greeting still arrives clean; the leftover
+    header bytes then sit in the server's input buffer ahead of the client's
+    first command, which the server parses as garbage and rejects. Intended
+    for plaintext / STARTTLS endpoints — with implicit TLS the same fault
+    instead breaks the handshake, which `probe_greeting` reports as
+    `tls_failed`.
+    """
+    start = time.monotonic()
+    sock, err = _connect_tcp(endpoint.host, endpoint.port, connect_timeout)
+    if err:
+        return CommandChannelResult(endpoint, "deferred", error=f"{err[0]}: {err[1]}")
+    try:
+        if endpoint.implicit_tls:
+            ctx = ssl_ctx or ssl.create_default_context()
+            try:
+                sock.settimeout(connect_timeout)
+                sock = ctx.wrap_socket(sock, server_hostname=endpoint.sni)
+            except (ssl.SSLError, OSError) as e:
+                return CommandChannelResult(endpoint, "deferred", error=f"tls_failed: {e}")
+
+        greeting = _recv_some(sock, greeting_timeout)
+        if not greeting or greeting.startswith(b"HTTP/") or not _GREETING_RE[endpoint.protocol].match(greeting):
+            # No usable greeting: this is mode A, owned by the greeting test.
+            return CommandChannelResult(endpoint, "deferred", greeting=greeting or b"", error="no usable greeting")
+
+        try:
+            sock.sendall(_CMD_PROBE[endpoint.protocol])
+        except OSError as e:
+            return CommandChannelResult(endpoint, "closed", greeting=greeting, error=str(e))
+        reply = _recv_some(sock, reply_timeout)
+        try:
+            sock.sendall(_LOGOUT[endpoint.protocol])
+            _recv_some(sock, 1.0, settle=0.1)
+        except OSError:
+            pass
+
+        if reply is None:
+            return CommandChannelResult(endpoint, "silent", greeting=greeting)
+        if reply == b"":
+            return CommandChannelResult(endpoint, "closed", greeting=greeting)
+        if _CMD_ACCEPTED[endpoint.protocol].search(reply):
+            return CommandChannelResult(endpoint, "ok", greeting=greeting, reply=reply)
+        return CommandChannelResult(endpoint, "rejected", greeting=greeting, reply=reply)
+    finally:
+        try:
+            sock.close()
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------

@@ -8,7 +8,8 @@ mode and vice versa.
 
 import pytest
 
-from lib.managesieve import make_ssl_context
+from lib.managesieve import ManageSieveError, make_ssl_context
+from lib.probe import DIAG_UNCONSUMED_PROXY, looks_like_command_rejection
 
 
 def test_greeting_received(managesieve_endpoint):
@@ -37,10 +38,21 @@ def test_starttls_connects(sieve_connect_plain, cfg):
         assert "STARTTLS" in client.capabilities, (
             f"STARTTLS not advertised in the plaintext greeting: {sorted(client.capabilities)}"
         )
-        client.starttls(make_ssl_context(cfg.get("no_verify", False)))
+        try:
+            client.starttls(make_ssl_context(cfg.get("no_verify", False)))
+        except ManageSieveError as e:
+            # STARTTLS is advertised yet rejected as an invalid command: the
+            # command stream reaching the backend is corrupted — classically an
+            # unconsumed PROXY-protocol header (see tests/proxy/test_command_channel).
+            if looks_like_command_rejection(str(e)):
+                pytest.fail(f"STARTTLS rejected as an invalid command ({e}). {DIAG_UNCONSUMED_PROXY}")
+            raise
         assert client.is_tls
     finally:
-        client.logout()
+        try:
+            client.logout()
+        except Exception:
+            pass
 
 
 def test_socket_is_encrypted(sieve_connect):

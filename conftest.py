@@ -14,7 +14,7 @@ from lib.managesieve import (
     login as sieve_login,
     make_ssl_context as sieve_ssl_ctx,
 )
-from lib.probe import endpoints_from_config, managesieve_tls_mode, probe_greeting
+from lib.probe import endpoints_from_config, managesieve_tls_mode, probe_command_channel, probe_greeting
 from lib.tls import make_context, register_servername
 
 
@@ -84,6 +84,36 @@ def greeting_probe(cfg):
             cache[name] = probe_greeting(
                 endpoints[name], ssl_ctx=ctx, greeting_timeout=timeout, reply_timeout=timeout
             )
+        return cache[name]
+
+    return _probe
+
+
+@pytest.fixture(scope="session")
+def command_channel_probe(cfg):
+    """Return probe(endpoint_name) -> lib.probe.CommandChannelResult, cached per session.
+
+    Sends one benign command after the greeting to catch an unconsumed
+    PROXY-protocol header (the greeting alone arrives clean). Implicit-TLS
+    endpoints are skipped — there the same fault breaks the TLS handshake and
+    the greeting test reports it.
+    """
+    proxy = cfg.get("proxy") or {}
+    timeout = float(proxy.get("greeting_timeout", 5))
+    endpoints = endpoints_from_config(cfg)
+    cache = {}
+
+    def _probe(name):
+        if name not in endpoints:
+            pytest.skip(f"endpoint {name} not configured")
+        ep = endpoints[name]
+        if ep.implicit_tls:
+            pytest.skip(
+                f"{name}: implicit-TLS endpoint — an unconsumed PROXY header breaks the "
+                "TLS handshake, which the greeting test reports"
+            )
+        if name not in cache:
+            cache[name] = probe_command_channel(ep, greeting_timeout=timeout, reply_timeout=timeout)
         return cache[name]
 
     return _probe
