@@ -3,7 +3,9 @@
 import imaplib
 import re
 import ssl
-from typing import List, Set, Tuple
+from typing import List, Optional, Set, Tuple
+
+from lib.tls import make_context
 
 
 LIST_RE = re.compile(
@@ -16,19 +18,31 @@ LIST_RE = re.compile(
 
 
 def make_ssl_context(no_verify: bool = False) -> ssl.SSLContext:
-    ctx = ssl.create_default_context()
-    if no_verify:
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-    return ctx
+    """Client TLS context; honours `imap.tls_servername` (see lib/tls.py)."""
+    return make_context(no_verify, protocol="imap")
 
 
-def connect_ssl(host: str, port: int, ssl_ctx: ssl.SSLContext) -> imaplib.IMAP4_SSL:
-    return imaplib.IMAP4_SSL(host, port, ssl_context=ssl_ctx)
+# Socket timeout for every connection opened through these helpers. Without
+# one, a port that accepts TCP but never greets (e.g. a reverse proxy
+# peeking for client-first bytes) blocks the test run forever.
+DEFAULT_TIMEOUT = 30.0
 
 
-def connect_starttls(host: str, port: int, ssl_ctx: ssl.SSLContext) -> imaplib.IMAP4:
-    imap = imaplib.IMAP4(host, port)
+def connect_ssl(
+    host: str, port: int, ssl_ctx: ssl.SSLContext, timeout: Optional[float] = DEFAULT_TIMEOUT
+) -> imaplib.IMAP4_SSL:
+    return imaplib.IMAP4_SSL(host, port, ssl_context=ssl_ctx, timeout=timeout)
+
+
+def connect_plain(host: str, port: int, timeout: Optional[float] = DEFAULT_TIMEOUT) -> imaplib.IMAP4:
+    """Unencrypted connection (for pre-STARTTLS checks)."""
+    return imaplib.IMAP4(host, port, timeout=timeout)
+
+
+def connect_starttls(
+    host: str, port: int, ssl_ctx: ssl.SSLContext, timeout: Optional[float] = DEFAULT_TIMEOUT
+) -> imaplib.IMAP4:
+    imap = imaplib.IMAP4(host, port, timeout=timeout)
     typ, data = imap.starttls(ssl_ctx)
     if typ != "OK":
         raise RuntimeError(f"STARTTLS failed: {typ} {data}")

@@ -2,7 +2,7 @@
 
 Python's standard library has no ManageSieve support (unlike imaplib/smtplib),
 so this module implements just enough of RFC 5804's wire protocol to drive a
-real server: greeting/capability parsing, STARTTLS, SASL PLAIN
+real server: greeting/capability parsing, STARTTLS or implicit TLS, SASL PLAIN
 authentication, and the script-management commands (PUTSCRIPT, LISTSCRIPTS,
 SETACTIVE, GETSCRIPT, DELETESCRIPT, RENAMESCRIPT, CHECKSCRIPT, HAVESPACE).
 
@@ -24,6 +24,8 @@ import re
 import socket
 import ssl
 from typing import Dict, List, Optional, Tuple
+
+from lib.tls import make_context
 
 
 DEFAULT_PORT = 4190
@@ -50,28 +52,51 @@ def _quote(s: str) -> str:
 
 
 def make_ssl_context(no_verify: bool = False) -> ssl.SSLContext:
-    ctx = ssl.create_default_context()
-    if no_verify:
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-    return ctx
+    """Client TLS context; honours `managesieve.tls_servername` (see lib/tls.py)."""
+    return make_context(no_verify, protocol="managesieve")
 
 
 class ManageSieveClient:
     """A minimal synchronous RFC 5804 client."""
 
-    def __init__(self, host: str, port: int = DEFAULT_PORT, timeout: float = 15.0):
+    def __init__(
+        self,
+        host: str,
+        port: int = DEFAULT_PORT,
+        timeout: float = 15.0,
+        ssl_ctx: Optional[ssl.SSLContext] = None,
+    ):
+        """Connect and read the greeting.
+
+        With `ssl_ctx`, TLS is negotiated immediately after the TCP connect
+        (implicit TLS, as some deployments run ManageSieve behind a TLS-
+        terminating proxy or on a dedicated port); the greeting is then read
+        over TLS and its capabilities are already the post-TLS ones.
+        """
         self.host = host
         self.port = port
+        self.implicit_tls = ssl_ctx is not None
         self._sock = socket.create_connection((host, port), timeout=timeout)
-        self._rfile = self._sock.makefile("rb")
+        self._rfile = None
         self.capabilities: Dict[str, str] = {}
-        self._read_greeting()
+        try:
+            if ssl_ctx is not None:
+                self._wrap_tls(ssl_ctx)
+            else:
+                self._rfile = self._sock.makefile("rb")
+            self._read_greeting()
+        except Exception:
+            self.close()
+            raise
 
     # -- transport ------------------------------------------------------
 
     def socket(self):
         return self._sock
+
+    @property
+    def is_tls(self) -> bool:
+        return isinstance(self._sock, ssl.SSLSocket)
 
     def close(self) -> None:
         try:
@@ -99,7 +124,10 @@ class ManageSieveClient:
         before the marker and any trailing tokens after the octets (e.g.
         " ACTIVE") are spliced back on around it.
         """
-        raw = self._rfile.readline()
+        try:
+            raw = self._rfile.readline()
+        except socket.timeout:
+            raise ManageSieveError("Timed out waiting for a server response")
         if not raw:
             raise ManageSieveError("Connection closed by server")
         line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
@@ -285,6 +313,27 @@ def connect_starttls(
     client = ManageSieveClient(host, port, timeout=timeout)
     client.starttls(ssl_ctx)
     return client
+
+
+def connect_implicit_tls(
+    host: str, port: int, ssl_ctx: ssl.SSLContext, timeout: float = 15.0
+) -> ManageSieveClient:
+    """TLS from the first byte; the greeting is read over TLS (no STARTTLS)."""
+    return ManageSieveClient(host, port, timeout=timeout, ssl_ctx=ssl_ctx)
+
+
+TLS_MODES = ("starttls", "implicit")
+
+
+def connect_secure(
+    host: str, port: int, ssl_ctx: ssl.SSLContext, mode: str = "starttls", timeout: float = 15.0
+) -> ManageSieveClient:
+    """Return an encrypted, unauthenticated client using the configured TLS mode."""
+    if mode == "implicit":
+        return connect_implicit_tls(host, port, ssl_ctx, timeout=timeout)
+    if mode == "starttls":
+        return connect_starttls(host, port, ssl_ctx, timeout=timeout)
+    raise ValueError(f"Unknown ManageSieve TLS mode {mode!r} (expected one of {TLS_MODES})")
 
 
 def login(client: ManageSieveClient, user: str, password: str) -> None:

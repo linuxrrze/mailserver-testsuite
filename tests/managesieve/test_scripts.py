@@ -7,6 +7,8 @@ active, and these tests must not leave it permanently deactivated.
 """
 
 import uuid
+import warnings
+
 import pytest
 
 from lib.managesieve import ManageSieveError
@@ -88,13 +90,25 @@ def test_active_script_cannot_be_deleted(sieve, cfg):
     previously_active = _active_script(sieve)
 
     sieve.put_script(name, VALID_SCRIPT)
-    sieve.set_active(name)
     try:
+        sieve.set_active(name)
         with pytest.raises(ManageSieveError):
             sieve.delete_script(name)
     finally:
-        sieve.set_active(previously_active if previously_active else "")
-        sieve.delete_script(name)
+        # Cleanup must not mask the real failure: if the server wrongly
+        # deleted the active script above, restoring/deleting it raises too.
+        cleanup_errors = []
+        try:
+            sieve.set_active(previously_active if previously_active else "")
+        except Exception as e:  # noqa: BLE001 — report, don't mask
+            cleanup_errors.append(f"restore active script {previously_active!r}: {e}")
+        try:
+            if name in {n for n, _active in sieve.list_scripts()}:
+                sieve.delete_script(name)
+        except Exception as e:  # noqa: BLE001
+            cleanup_errors.append(f"delete {name!r}: {e}")
+        if cleanup_errors:
+            warnings.warn("test_active_script_cannot_be_deleted cleanup: " + "; ".join(cleanup_errors))
 
 
 def test_deletescript_removes_script(sieve, cfg):
