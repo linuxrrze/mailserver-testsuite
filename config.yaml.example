@@ -1,0 +1,41 @@
+imap:
+  host: mail.example.com
+  port_ssl: 993
+  port_starttls: 143
+
+smtp:
+  host: mail.example.com
+  port_submission: 587
+  port_smtps: 465
+  allow_authenticated_relay: true   # set false if your MSA blocks relay to foreign domains
+  max_recipients: 100               # expected per-message recipient limit
+
+# Optional — omit this whole section (or leave `host` unset) to skip all
+# managesieve tests. Only STARTTLS on the RFC 5804 default port is assumed;
+# there is no implicit-TLS variant to configure.
+managesieve:
+  host: mail.example.com
+  port: 4190                        # RFC 5804 default
+  script_prefix: mailtest-suite     # scripts created during tests are named "<prefix>-<test>-<random>"
+
+# Set no_verify: true when using self-signed certificates
+no_verify: false
+
+accounts:
+  - user: test@example.com
+    password: "changeme"
+  - user: test2@example.com
+    password: "changeme2"
+
+expected_folders:
+  - INBOX
+  - Sent
+  - Drafts
+  - Trash
+  - Junk
+
+domain: example.com
+dkim_selector: mail
+
+security:
+  brute_force_probe_attempts: 10    # how many bad logins to try before asserting protection
