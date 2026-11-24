@@ -48,36 +48,6 @@ security:
   brute_force_probe_attempts: 10
 ```
 
-## Last known test results (linux-ng.de, 2026-06-27)
-
-```
-92 passed, 27 skipped, 7 xfailed — 0 failures
-```
-
-### Skipped
-
-- **DNS + SRV records** (19 tests): `dnspython` not installed. Run
-  `pip install dnspython` to enable MX, SPF, DMARC, DKIM, PTR, MTA-STS,
-  DANE, and RFC 6186 SRV record checks.
-- **Autodiscover Protocol tests** (5 tests): the server serves Mozilla
-  `clientConfig` XML at the Autodiscover URL — Microsoft POX Protocol
-  checks are skipped automatically when that format is detected.
-- **QUOTA extension** (2 tests): server does not advertise the QUOTA cap.
-- **`test_required_capability`** (1 test): `REQUIRED_CAPS = []` — IMAP
-  version is checked by a separate dedicated test.
-
-### XFailed (soft warnings, not failures)
-
-| Test | Reason |
-|---|---|
-| `test_desirable_capability[QUOTA]` | QUOTA not advertised — optional |
-| `test_store_on_examined_mailbox_rejected` | Server allows STORE on read-only mailbox (RFC 3501 §6.4.6 violation) |
-| `test_imap_repeated_failures_trigger_protection` | No fail2ban / rate-limit detected on IMAP |
-| `test_smtp_repeated_failures_trigger_protection` | No fail2ban / rate-limit detected on SMTP |
-| `test_malformed_mail_from_rejected` | Server normalises non-RFC-5321 MAIL FROM syntax |
-| `test_max_recipients_enforced` | No per-message recipient cap within 500 probes |
-| `test_unauthenticated_relay_rejected` | Test runner IP is in Postfix `mynetworks` — verify from an untrusted IP |
-
 ## Project layout
 
 ```
@@ -105,29 +75,22 @@ tests/
   smtp/               — connectivity, auth, commands (VRFY/EXPN), limits, relay
 ```
 
-## Known server quirks (linux-ng.de / Dovecot)
+## Implementation notes
 
-- **Post-login CAPABILITY omits IMAP4rev1**: Dovecot drops the version token
-  from the authenticated-state CAPABILITY response. The version test uses a
-  fresh pre-login connection.
+- **IMAP version check uses a pre-login connection**: some servers (e.g.
+  Dovecot) drop `IMAP4rev1` from the authenticated-state CAPABILITY
+  response, so the version test opens a fresh connection.
 - **`get_capabilities` must not unconditionally skip `parts[0]`**: Python's
-  imaplib omits the `CAPABILITY` keyword from `data[0]`, so the parser now
+  imaplib omits the `CAPABILITY` keyword from `data[0]`, so the parser
   strips it only when it is actually present.
-- **Autodiscover URL serves Mozilla format**: `autodiscover.linux-ng.de`
-  returns `<clientConfig>` XML. The Mozilla autoconfig tests include that URL
-  as a fallback; Autodiscover Protocol tests skip when they detect this format.
-- **Relay from localhost always accepted**: Postfix `mynetworks` includes the
-  loopback address, so `test_unauthenticated_relay_rejected` xfails when run
-  on the server itself.
-- **ManageSieve (port 4190) not currently exposed**: a TCP connect to
-  `imap.linux-ng.de:4190` was accepted (no RST) but no RFC 5804 greeting
-  ever arrived — something between the client and the host swallows the
-  connection rather than refusing it outright. The `managesieve_cfg`
-  fixture therefore does a full greeting-read preflight (not just a TCP
-  connect) before running any ManageSieve test, so the whole area skips
-  cleanly instead of every test hanging on its own read timeout. Once
-  Dovecot's Pigeonhole managesieve service is enabled and reachable, the
-  `tests/managesieve/` suite and the ManageSieve sections of
-  `tests/security/test_tls.py` and `test_brute_force.py` should start
-  running instead of skipping — they were validated against a local mock
-  RFC 5804 server (not yet against this server's real Dovecot instance).
+- **Autodiscover URLs serving Mozilla format**: if the Autodiscover URL
+  returns `<clientConfig>` XML, the Mozilla autoconfig tests use it as a
+  fallback and the Microsoft Autodiscover Protocol tests skip.
+- **Unauthenticated relay test depends on the runner's IP**: if the runner
+  is in Postfix `mynetworks` (e.g. running on the server itself),
+  `test_unauthenticated_relay_rejected` xfails — run it from an untrusted IP.
+- **ManageSieve preflight**: the `managesieve_cfg` fixture reads the full
+  RFC 5804 greeting (not just a TCP connect) before running any ManageSieve
+  test, so the area skips cleanly when port 4190 accepts connections but
+  never sends a greeting (e.g. a filtering middlebox), instead of every test
+  hanging on its own read timeout.
