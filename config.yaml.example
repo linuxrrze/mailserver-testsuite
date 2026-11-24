@@ -2,6 +2,9 @@ imap:
   host: mail.example.com
   port_ssl: 993
   port_starttls: 143
+  # tls_servername: mail.example.com  # TLS SNI / cert name, if it differs from `host`
+                                      # (e.g. an SNI-routing TLS-passthrough proxy whose
+                                      # HostSNI rule only matches another name)
 
 smtp:
   host: mail.example.com
@@ -9,13 +12,19 @@ smtp:
   port_smtps: 465
   allow_authenticated_relay: true   # set false if your MSA blocks relay to foreign domains
   max_recipients: 100               # expected per-message recipient limit
+  # tls_servername: mail.example.com  # TLS SNI / cert name, if it differs from `host`
 
 # Optional — omit this whole section (or leave `host` unset) to skip all
-# managesieve tests. Only STARTTLS on the RFC 5804 default port is assumed;
-# there is no implicit-TLS variant to configure.
+# managesieve tests. They also skip if the host doesn't resolve or refuses
+# the connection; a port that accepts TCP but never greets FAILS
+# tests/managesieve/test_connect.py::test_greeting_received with a diagnosis.
 managesieve:
   host: mail.example.com
   port: 4190                        # RFC 5804 default
+  tls: starttls                     # starttls (RFC 5804: plaintext greeting, then STARTTLS)
+                                    # | implicit (TLS from the first byte, e.g. behind a
+                                    #   TLS-terminating proxy); STARTTLS-only checks skip
+  # tls_servername: mail.example.com  # TLS SNI / cert name, if it differs from `host`
   script_prefix: mailtest-suite     # scripts created during tests are named "<prefix>-<test>-<random>"
 
 # Set no_verify: true when using self-signed certificates
@@ -39,3 +48,25 @@ dkim_selector: mail
 
 security:
   brute_force_probe_attempts: 10    # how many bad logins to try before asserting protection
+  cert_min_days_remaining: 14       # ManageSieve cert must stay valid at least this long
+
+# Reverse-proxy awareness (e.g. Traefik/HAProxy in front of Postfix/Dovecot).
+# Everything here is optional.
+proxy:
+  greeting_timeout: 5               # seconds to wait for a server greeting before
+                                    # sending a probe line to diagnose a stalled port
+  idle_probe_seconds: 0             # opt-in (0 = skip): idle an authenticated IMAP and
+                                    # ManageSieve session this long, then NOOP. Try 75 —
+                                    # Traefik v3's entrypoint respondingTimeouts.readTimeout
+                                    # reportedly defaults to 60s (unverified). Marked `slow`.
+  addresses: []                     # the proxy's own IP(s) as the backend sees them; a
+                                    # submission Received header showing one of these means
+                                    # PROXY protocol is not delivering the client IP
+  # expected_client_ip: 198.51.100.4  # this runner's address as the server should see it
+                                    # (set when NAT sits between runner and server)
+  proxy_protocol_backend_ports: []  # opt-in: backend ports that TRUST PROXY headers (e.g.
+                                    # [10465]); the test fails if they are reachable. Only
+                                    # meaningful when run from an UNTRUSTED network — on the
+                                    # LAN / the server itself they may legitimately be open.
+  # backend_host: mail.example.com  # host for the ports above (default: smtp.host);
+                                    # entries may also be "host:port" strings

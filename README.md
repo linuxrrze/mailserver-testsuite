@@ -1,6 +1,6 @@
 # mailserver-testsuite
 
-A pytest-based black-box test suite for IMAP and SMTP mail servers. Connects to a running server with real credentials and verifies correctness, security, and deliverability — no mocking, no fixtures, no internal server access required.
+A pytest-based black-box test suite for IMAP, SMTP and ManageSieve mail servers — including servers behind a reverse proxy (e.g. Traefik in front of Postfix/Dovecot). Connects to a running server with real credentials and verifies correctness, security, and deliverability — no mocking, no fixtures, no internal server access required.
 
 ## What it covers
 
@@ -15,15 +15,16 @@ A pytest-based black-box test suite for IMAP and SMTP mail servers. Connects to 
 | **SMTP – protocol** | VRFY/EXPN disabled, command-sequence enforcement, malformed address rejection |
 | **SMTP – limits** | SIZE advertised and enforced, null sender (MAIL FROM:\<\>), per-message recipient cap |
 | **SMTP – relay** | Unauthenticated relay blocked, authenticated relay policy |
-| **ManageSieve** | STARTTLS (4190), CAPABILITY, AUTHENTICATE, script upload/list/get/activate/delete/rename/check |
-| **End-to-end** | SMTP → IMAP round-trip, delivery latency, Message-ID / DKIM-Signature / Received headers |
-| **Security** | LOGINDISABLED before STARTTLS, capability change after STARTTLS, brute-force protection (IMAP/SMTP/ManageSieve) |
+| **ManageSieve** | Greeting, STARTTLS or implicit TLS (4190), CAPABILITY, AUTHENTICATE, script upload/list/get/activate/delete/rename/check |
+| **End-to-end** | SMTP → IMAP round-trip, delivery latency, Message-ID / DKIM-Signature / Received headers, real client IP recorded on the submission hop |
+| **Security** | LOGINDISABLED before STARTTLS, capability change after STARTTLS, ManageSieve cert expiry margin, brute-force protection (IMAP/SMTP/ManageSieve, proxy-aware) |
+| **Reverse proxy** | Greeting stall / HTTP-answer diagnosis on every server-first port, SNI hint for TLS-passthrough routing, PROXY-protocol backend port reachability (opt-in), idle-timeout survival (opt-in, slow) |
 | **DNS** | MX, SPF, DMARC, DKIM, PTR, MTA-STS, DANE/TLSA |
 | **Auto-configuration** | Mozilla Autoconfig XML (Thunderbird), Microsoft Autodiscover XML (Outlook), RFC 6186/8314 DNS SRV records |
 
 ## Requirements
 
-- Python 3.8 or later
+- Python 3.9 or later
 - A running mail server reachable from the machine running the tests
 - Two test accounts on the server (one is sufficient for most tests)
 
@@ -77,6 +78,12 @@ pytest -x -s
 
 # Skip slow DNS/e2e tests
 pytest --ignore=tests/dns --ignore=tests/e2e
+
+# Skip opt-in slow checks (idle-timeout probe)
+pytest -m "not slow"
+
+# Use a different config file
+MAILTEST_CONFIG=/path/to/other.yaml pytest
 ```
 
 ## Configuration
@@ -90,6 +97,7 @@ All options live in `config.yaml`. Copy `config.yaml.example` to get started.
 | `host` | — | IMAP server hostname |
 | `port_ssl` | `993` | Port for IMAPS (TLS from the start) |
 | `port_starttls` | `143` | Port for STARTTLS |
+| `tls_servername` | `host` | TLS SNI / certificate name, if it differs from `host` (e.g. an SNI-routing TLS-passthrough proxy) |
 
 ### `smtp`
 
@@ -100,15 +108,18 @@ All options live in `config.yaml`. Copy `config.yaml.example` to get started.
 | `port_smtps` | `465` | SMTPS port (TLS from the start) |
 | `allow_authenticated_relay` | `true` | Whether authenticated users may send to foreign domains. Set `false` if your MSA blocks it and the relay policy test should assert that. |
 | `max_recipients` | `100` | Expected per-message recipient cap for the limit test |
+| `tls_servername` | `host` | TLS SNI / certificate name, if it differs from `host` |
 
 ### `managesieve`
 
-Optional. Omit this section entirely (or leave `host` unset) to skip all ManageSieve tests; they also skip automatically if the host doesn't respond with a valid RFC 5804 greeting (e.g. the service isn't enabled), so a stale or wrong entry won't hang the suite.
+Optional. Omit this section entirely (or leave `host` unset) to skip all ManageSieve tests; they also skip if the host doesn't resolve or refuses the connection. If the port accepts TCP but never sends an RFC 5804 greeting (typically a reverse proxy waiting for client-first bytes), `tests/managesieve/test_connect.py::test_greeting_received` fails with a diagnosis and the other ManageSieve tests skip with a reference to it — nothing hangs.
 
 | Key | Default | Description |
 |---|---|---|
 | `host` | — | ManageSieve server hostname |
-| `port` | `4190` | RFC 5804 default (STARTTLS only — there is no implicit-TLS variant) |
+| `port` | `4190` | RFC 5804 default |
+| `tls` | `starttls` | `starttls` (plaintext greeting, then STARTTLS) or `implicit` (TLS from the first byte, e.g. behind a TLS-terminating proxy). STARTTLS-only checks skip in implicit mode; implicit mode adds checks that the greeting arrives over TLS, STARTTLS is not advertised, and PLAIN is offered. |
+| `tls_servername` | `host` | TLS SNI / certificate name, if it differs from `host` |
 | `script_prefix` | `mailtest-suite` | Prefix for the throwaway scripts uploaded/deleted during tests |
 
 Tests that exercise `SETACTIVE` save whatever script was already active on the account beforehand and restore it afterwards, so a real, in-use filter won't be left deactivated.
@@ -152,7 +163,24 @@ The DKIM selector to look up in DNS (e.g. `mail` looks up `mail._domainkey.examp
 
 ### `security.brute_force_probe_attempts`
 
-How many consecutive failed logins to attempt before asserting that rate limiting or a block triggered. Default: `10` for IMAP, `5` for SMTP.
+How many consecutive failed logins to attempt before asserting that rate limiting or a block triggered. Default: `10` for IMAP, `5` for SMTP. Behind a proxy a ban often shows up as a connection that is accepted and then closed/silent; any connect or greeting failure after a successful first attempt counts as protection.
+
+### `security.cert_min_days_remaining`
+
+Minimum remaining validity (days) of the ManageSieve certificate. Default: `14`.
+
+### `proxy`
+
+Optional reverse-proxy settings.
+
+| Key | Default | Description |
+|---|---|---|
+| `greeting_timeout` | `5` | Seconds to wait for a greeting before sending a probe line to diagnose a stalled port |
+| `idle_probe_seconds` | `0` | Opt-in: idle an authenticated IMAP and ManageSieve session this long, then NOOP (try `75`; Traefik v3's entrypoint read timeout reportedly defaults to 60 s). Marked `slow`. |
+| `addresses` | `[]` | The proxy's IPs as the backend sees them; seeing one in the submission `Received` header fails the client-IP check |
+| `expected_client_ip` | — | This runner's IP as the server should see it (set when NAT sits in between) |
+| `proxy_protocol_backend_ports` | `[]` | Opt-in: backend ports that trust PROXY headers (e.g. `[10465]`). Fails if reachable — only meaningful when run from an **untrusted** network. Connect + greeting only, no mail transaction. |
+| `backend_host` | `smtp.host` | Host for the ports above (entries may also be `"host:port"`) |
 
 ## Understanding test results
 
@@ -172,7 +200,9 @@ conftest.py           — shared pytest fixtures (connections, accounts)
 lib/
   imap.py             — IMAP connection and parsing helpers
   smtp.py             — SMTP connection helpers
-  managesieve.py      — ManageSieve (RFC 5804) protocol client
+  managesieve.py      — ManageSieve (RFC 5804) protocol client (STARTTLS / implicit TLS)
+  tls.py              — SSL context factory with TLS server-name (SNI) override
+  probe.py            — greeting-stall diagnosis and PROXY backend-port probes
 tests/
   imap/               — IMAP connectivity, folders, messages, extensions
   smtp/               — SMTP connectivity, auth, commands, limits, relay
@@ -181,4 +211,5 @@ tests/
   security/           — TLS, unencrypted auth, brute-force protection
   dns/                — MX, SPF, DMARC, DKIM, PTR, MTA-STS, DANE
   autoconfig/         — Mozilla Autoconfig, Autodiscover, DNS SRV records
+  proxy/              — greeting diagnosis, PROXY backend ports, idle timeout
 ```
