@@ -16,6 +16,40 @@ MAILTEST_CONFIG=/path/other.yaml pytest   # alternate config file
 
 Full run takes ~5 minutes (live network I/O to the mail server).
 
+## Check classes (anonymous / read-only / full)
+
+Every test belongs to exactly one class, by the highest access it needs:
+
+- **anonymous** — needs no credentials: TLS, DNS, autoconfig, greetings,
+  command-channel, unauthenticated-relay rejection, plaintext-auth rejection,
+  brute-force wrong-password probes, pre-login capability advertisement.
+- **read_only** — logs in but only reads and changes nothing: LOGIN,
+  CAPABILITY, LIST/LSUB, SELECT/EXAMINE, FETCH, SEARCH, NAMESPACE,
+  GETQUOTA(ROOT), LISTSCRIPTS, GETSCRIPT, CHECKSCRIPT, HAVESPACE, NOOP, IDLE.
+- **full** — sends mail or mutates server state: SMTP delivery, e2e
+  send-and-fetch, IMAP APPEND/STORE/EXPUNGE/COPY/CREATE/DELETE/RENAME/
+  SUBSCRIBE, and ManageSieve PUTSCRIPT/DELETESCRIPT/RENAMESCRIPT/SETACTIVE.
+
+Select a cumulative ceiling with `--check-level` (or the `MAILTEST_CHECK_LEVEL`
+env var); it is cumulative (anonymous < read-only < full):
+
+```bash
+pytest --check-level=anonymous   # no login at all — TLS/DNS/autoconfig/greetings
+pytest --check-level=read-only   # anonymous + logins that only read; never sends or mutates
+pytest --check-level=full        # everything (DEFAULT — a bare `pytest` is unchanged)
+```
+
+**Safety guarantee:** a `--check-level=read-only` run never sends mail and
+never changes mailbox or Sieve state, so it is safe against a live production
+account. `full` is the default so existing invocations behave as before.
+
+A test's class comes from an explicit `@pytest.mark.{anonymous,read_only,full}`;
+with none, it is `read_only` if it uses a login fixture (`imap`, `imap_ssl`,
+`imap_starttls`, `smtp_submission`, `smtp_smtps`, `sieve`), else `anonymous`.
+Mutating/sending tests that don't use a named login fixture carry an explicit
+`@pytest.mark.full` so inference can't misplace them in a read-only run. The
+selection logic lives in `conftest.py` (`pytest_collection_modifyitems`).
+
 ## Configuration
 
 `config.yaml` holds server details and credentials. It is gitignored.
@@ -95,7 +129,10 @@ tests/
                         IDLE, extensions (NAMESPACE/QUOTA), state machine
   managesieve/        — connectivity, capabilities, auth, script management
                         (PUTSCRIPT/LISTSCRIPTS/GETSCRIPT/SETACTIVE/DELETESCRIPT/
-                        RENAMESCRIPT/CHECKSCRIPT/HAVESPACE)
+                        RENAMESCRIPT/CHECKSCRIPT/HAVESPACE). The two SETACTIVE
+                        tests are opt-in (`managesieve.allow_setactive: true`)
+                        and run against a dedicated throwaway account (never the
+                        primary user) — see the `sieve_setactive` fixture.
   security/           — TLS version/cipher/cert, unencrypted-auth rejection, brute
                         force (IMAP/SMTP/ManageSieve)
   proxy/              — greeting stall/HTTP-answer diagnosis (IMAP/SMTP),

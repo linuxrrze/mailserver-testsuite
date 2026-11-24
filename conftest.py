@@ -345,3 +345,44 @@ def sieve(sieve_connect, primary_account):
     sieve_login(client, primary_account["user"], primary_account["password"])
     yield client
     client.logout()
+
+
+@pytest.fixture
+def sieve_setactive(cfg, sieve_connect, primary_account):
+    """Authenticated ManageSieve connection for the SETACTIVE tests only.
+
+    SETACTIVE (and SETACTIVE "") replaces or disables the account's *live*
+    active Sieve script, so for the duration of the test the account's real
+    filtering is briefly off and a hard crash between activate and the
+    finally-restore could leave it deactivated. These tests therefore:
+
+      * require explicit opt-in via ``managesieve.allow_setactive: true``; and
+      * run against a dedicated throwaway account, never the primary user —
+        ``managesieve.setactive_account`` ({user, password}) if configured,
+        otherwise the second entry in ``accounts``.
+
+    The connection lifecycle matches the ``sieve`` fixture.
+    """
+    ms = cfg.get("managesieve") or {}
+    if not ms.get("allow_setactive", False):
+        pytest.skip(
+            "SETACTIVE changes the account's active Sieve script; "
+            "set managesieve.allow_setactive: true to run"
+        )
+    account = ms.get("setactive_account")
+    if not account:
+        accounts = cfg.get("accounts") or []
+        account = accounts[1] if len(accounts) >= 2 else None
+    no_dedicated = (
+        "refusing to toggle the primary account's active script — configure a "
+        "dedicated managesieve.setactive_account or a second account"
+    )
+    if not account or not account.get("user"):
+        pytest.skip(no_dedicated)
+    if account["user"] == primary_account["user"]:
+        pytest.skip(no_dedicated)
+
+    client = sieve_connect()
+    sieve_login(client, account["user"], account["password"])
+    yield client
+    client.logout()

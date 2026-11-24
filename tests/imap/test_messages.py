@@ -3,6 +3,9 @@
 import uuid
 import pytest
 
+# Every test here APPENDs (and EXPUNGEs) a message -> mutates the mailbox -> full.
+pytestmark = pytest.mark.full
+
 TEST_BODY = "Hello from the mailserver test suite.\r\nThis is a test message.\r\n"
 
 

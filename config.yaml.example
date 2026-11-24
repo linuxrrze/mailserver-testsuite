@@ -1,3 +1,7 @@
+# There is no check-level key here: the check class to run is a CLI flag/env var,
+# not config. Use `pytest --check-level=anonymous|read-only|full` (or the
+# MAILTEST_CHECK_LEVEL env var); default is `full`. See the README / CLAUDE.md.
+
 imap:
   host: mail.example.com
   port_ssl: 993
@@ -26,6 +30,13 @@ managesieve:
                                     #   TLS-terminating proxy); STARTTLS-only checks skip
   # tls_servername: mail.example.com  # TLS SNI / cert name, if it differs from `host`
   script_prefix: mailtest-suite     # scripts created during tests are named "<prefix>-<test>-<random>"
+  allow_setactive: false            # opt-in for the two SETACTIVE tests. SETACTIVE briefly
+                                    # disables the account's active filter, and a crash mid-test
+                                    # could leave it off, so they are off by default and, when
+                                    # enabled, run against a dedicated throwaway account.
+  # setactive_account:              # dedicated account for the SETACTIVE tests (never the
+  #   user: sievetest@example.com   # primary user). If omitted, the second `accounts` entry is
+  #   password: "changeme3"         # used; the tests skip if that resolves to the primary user.
 
 # Set no_verify: true when using self-signed certificates
 no_verify: false

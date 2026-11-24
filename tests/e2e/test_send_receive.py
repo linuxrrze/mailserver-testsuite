@@ -8,6 +8,9 @@ import pytest
 from lib.imap import connect_ssl, login as imap_login, logout, make_ssl_context as imap_ssl_ctx
 from lib.smtp import build_message
 
+# Every test here delivers a real message (SMTP send + IMAP cleanup) -> full tier.
+pytestmark = pytest.mark.full
+
 
 POLL_INTERVAL = 2   # seconds between IMAP polls
 MAX_WAIT = 30       # seconds before giving up

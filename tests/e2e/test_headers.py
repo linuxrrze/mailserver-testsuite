@@ -23,6 +23,13 @@ from lib.smtp import (
     quit as smtp_quit,
 )
 
+# The module-scoped delivered_header fixture sends a real message via submission
+# (connect_submission directly, not a login fixture), so every test here depends
+# on an actual delivery -> full tier. An explicit marker is required because the
+# tests use `delivered_header`, not one of the named login fixtures, and would
+# otherwise misinfer as anonymous.
+pytestmark = pytest.mark.full
+
 POLL_INTERVAL = 2
 MAX_WAIT = 30
 

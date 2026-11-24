@@ -56,6 +56,27 @@ Edit `config.yaml` — at minimum set `imap.host`, `smtp.host`, `domain`, and at
 pytest
 ```
 
+## Check levels (safe against a live server)
+
+Each test is classified by the access it needs, and `--check-level` runs a
+cumulative ceiling (anonymous < read-only < full):
+
+```bash
+pytest --check-level=anonymous   # no login at all: TLS, DNS, autoconfig, greetings
+pytest --check-level=read-only   # anonymous + logins that ONLY read (never send or mutate)
+pytest --check-level=full        # everything (DEFAULT — a bare `pytest` is unchanged)
+```
+
+The level can also be set with the `MAILTEST_CHECK_LEVEL` environment variable.
+
+| Level | What it does | Safe on a production account? |
+|---|---|---|
+| `anonymous` | No credentials — TLS, DNS, autoconfig, greetings, unauth/plaintext rejection, brute-force wrong-password probes | Yes |
+| `read-only` | Logs in but only reads (LIST, SELECT/EXAMINE, FETCH, SEARCH, CAPABILITY, GETQUOTA, GETSCRIPT, CHECKSCRIPT, NOOP, IDLE) | Yes — never sends mail or changes mailbox/Sieve state |
+| `full` | Sends mail and mutates state (APPEND/STORE/EXPUNGE/COPY, folder create/rename/delete, SMTP delivery, Sieve PUTSCRIPT/SETACTIVE) | Use a test account |
+
+`full` is the default, so `pytest` with no flag behaves exactly as before.
+
 ## Running specific subsets
 
 ```bash
@@ -121,8 +142,10 @@ Optional. Omit this section entirely (or leave `host` unset) to skip all ManageS
 | `tls` | `starttls` | `starttls` (plaintext greeting, then STARTTLS) or `implicit` (TLS from the first byte, e.g. behind a TLS-terminating proxy). STARTTLS-only checks skip in implicit mode; implicit mode adds checks that the greeting arrives over TLS, STARTTLS is not advertised, and PLAIN is offered. |
 | `tls_servername` | `host` | TLS SNI / certificate name, if it differs from `host` |
 | `script_prefix` | `mailtest-suite` | Prefix for the throwaway scripts uploaded/deleted during tests |
+| `allow_setactive` | `false` | Opt-in for the two `SETACTIVE` tests. They stay skipped unless this is `true`. |
+| `setactive_account` | — | Dedicated `{user, password}` for the `SETACTIVE` tests. Defaults to the second `accounts` entry; the tests skip if that resolves to the primary user. |
 
-Tests that exercise `SETACTIVE` save whatever script was already active on the account beforehand and restore it afterwards, so a real, in-use filter won't be left deactivated.
+Tests that exercise `SETACTIVE` save whatever script was already active on the account beforehand and restore it afterwards, so a real, in-use filter won't be left deactivated. Because `SETACTIVE` briefly disables the account's active filter (and a crash mid-test could leave it off), these two tests are **opt-in** (`managesieve.allow_setactive: true`) and always run against a **dedicated throwaway account**, never the primary user.
 
 ### `accounts`
 

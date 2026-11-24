@@ -16,8 +16,15 @@ def test_size_extension_advertised(cfg):
     assert int(features["size"]) > 0, "Advertised SIZE limit is 0"
 
 
+@pytest.mark.read_only
 def test_oversized_message_rejected(cfg, primary_account):
-    """Declaring a message size beyond the limit in MAIL FROM must be rejected."""
+    """Declaring a message size beyond the limit in MAIL FROM must be rejected.
+
+    Logs in via a direct connect helper (not a login fixture), so it is marked
+    read_only explicitly to override the anonymous inference. It issues only a
+    MAIL FROM that the server rejects (no RCPT, no DATA): nothing is delivered
+    and no state changes, so it is safe in a read-only run.
+    """
     ctx = make_ssl_context(cfg.get("no_verify", False))
     smtp = connect_submission(cfg["smtp"]["host"], cfg["smtp"]["port_submission"], ctx)
     login(smtp, primary_account["user"], primary_account["password"])
@@ -59,8 +66,14 @@ def test_null_sender_accepted(cfg):
             pass
 
 
+@pytest.mark.full
 def test_max_recipients_enforced(cfg, primary_account):
-    """Server must stop accepting RCPT TO at some point (per-message recipient cap)."""
+    """Server must stop accepting RCPT TO at some point (per-message recipient cap).
+
+    Marked full: it logs in and builds a mail transaction with hundreds of RCPT
+    TO commands. Although it sends no DATA and RSETs, a read-only run must issue
+    no send-side transaction commands at all, so this is classified as full.
+    """
     configured_max = cfg.get("smtp", {}).get("max_recipients", 100)
     max_probe = configured_max + 400  # probe well above the configured limit
     ctx = make_ssl_context(cfg.get("no_verify", False))

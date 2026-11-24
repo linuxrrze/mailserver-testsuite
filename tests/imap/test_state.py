@@ -7,6 +7,7 @@ import pytest
 from lib.imap import connect_ssl, login, logout, make_ssl_context
 
 
+@pytest.mark.read_only
 def test_fetch_without_select_rejected(cfg, primary_account):
     """FETCH in AUTHENTICATED state (no mailbox selected) must be rejected."""
     ctx = make_ssl_context(cfg.get("no_verify", False))
@@ -24,6 +25,7 @@ def test_fetch_without_select_rejected(cfg, primary_account):
         logout(imap)
 
 
+@pytest.mark.read_only
 def test_examine_opens_readonly(cfg, primary_account):
     """EXAMINE must succeed and open the mailbox in read-only mode."""
     ctx = make_ssl_context(cfg.get("no_verify", False))
@@ -36,6 +38,7 @@ def test_examine_opens_readonly(cfg, primary_account):
         logout(imap)
 
 
+@pytest.mark.full
 def test_store_on_examined_mailbox_rejected(cfg, primary_account):
     """STORE must be rejected on a mailbox opened read-only with EXAMINE."""
     ctx = make_ssl_context(cfg.get("no_verify", False))
@@ -76,6 +79,7 @@ def test_noop_accepted_in_selected_state(imap):
     assert typ == "OK", f"NOOP returned {typ!r}"
 
 
+@pytest.mark.read_only
 def test_noop_accepted_in_authenticated_state(cfg, primary_account):
     """NOOP must also be accepted before any mailbox is selected."""
     ctx = make_ssl_context(cfg.get("no_verify", False))

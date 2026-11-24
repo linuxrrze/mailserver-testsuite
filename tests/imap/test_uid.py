@@ -3,6 +3,9 @@
 import uuid
 import pytest
 
+# Every test here APPENDs a message first (and EXPUNGEs it) -> mutates -> full.
+pytestmark = pytest.mark.full
+
 
 def _append(imap, subject, uid):
     raw = (

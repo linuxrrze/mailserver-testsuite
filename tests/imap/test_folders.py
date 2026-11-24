@@ -53,6 +53,7 @@ def test_inbox_is_subscribed(imap):
     assert "INBOX" in subscribed, "INBOX is not in the subscribed list"
 
 
+@pytest.mark.full
 def test_create_and_delete_folder(imap):
     name = f"TestFolder-{uuid.uuid4().hex[:8]}"
     try:
@@ -66,6 +67,7 @@ def test_create_and_delete_folder(imap):
         assert not any(name in f for f in folders_after), f"Folder {name!r} still present after DELETE"
 
 
+@pytest.mark.full
 def test_rename_folder(imap):
     name = f"TestRename-{uuid.uuid4().hex[:8]}"
     new_name = f"{name}-renamed"
@@ -100,6 +102,7 @@ def test_rfc6154_special_use_flag(imap, cfg, special_use, folder_hint):
     )
 
 
+@pytest.mark.full
 def test_subscribe_unsubscribe(imap):
     name = f"TestSub-{uuid.uuid4().hex[:8]}"
     imap.create(name)

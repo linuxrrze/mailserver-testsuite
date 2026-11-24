@@ -41,6 +41,7 @@ def test_unauthenticated_relay_rejected(cfg):
         )
 
 
+@pytest.mark.full
 def test_authenticated_send_to_own_domain(smtp_submission, cfg):
     """An authenticated user must be able to send to their own domain."""
     domain = cfg.get("domain", "example.com")
@@ -52,6 +53,7 @@ def test_authenticated_send_to_own_domain(smtp_submission, cfg):
     )
 
 
+@pytest.mark.full
 def test_authenticated_relay_to_foreign_domain(cfg, primary_account):
     """Verify relay policy for authenticated users sending to foreign domains.
 

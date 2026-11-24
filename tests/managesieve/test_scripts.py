@@ -26,6 +26,7 @@ def _active_script(sieve):
     return next((name for name, is_active in sieve.list_scripts() if is_active), None)
 
 
+@pytest.mark.full
 def test_putscript_and_listscripts_roundtrip(sieve, cfg):
     name = _script_name(cfg, "roundtrip")
     sieve.put_script(name, VALID_SCRIPT)
@@ -36,6 +37,7 @@ def test_putscript_and_listscripts_roundtrip(sieve, cfg):
         sieve.delete_script(name)
 
 
+@pytest.mark.full
 def test_getscript_returns_uploaded_content(sieve, cfg):
     name = _script_name(cfg, "getscript")
     sieve.put_script(name, VALID_SCRIPT)
@@ -57,6 +59,7 @@ def test_checkscript_rejects_invalid_syntax(sieve):
         sieve.check_script(INVALID_SCRIPT)
 
 
+@pytest.mark.full
 def test_putscript_rejects_invalid_syntax(sieve, cfg):
     name = _script_name(cfg, "invalid")
     with pytest.raises(ManageSieveError):
@@ -65,7 +68,9 @@ def test_putscript_rejects_invalid_syntax(sieve, cfg):
     assert name not in names, "Syntactically invalid script was stored anyway"
 
 
-def test_setactive_and_deactivate(sieve, cfg):
+@pytest.mark.full
+def test_setactive_and_deactivate(sieve_setactive, cfg):
+    sieve = sieve_setactive
     name = _script_name(cfg, "active")
     previously_active = _active_script(sieve)
 
@@ -84,8 +89,10 @@ def test_setactive_and_deactivate(sieve, cfg):
             sieve.set_active(previously_active)
 
 
-def test_active_script_cannot_be_deleted(sieve, cfg):
+@pytest.mark.full
+def test_active_script_cannot_be_deleted(sieve_setactive, cfg):
     """RFC 5804 §2.10: DELETESCRIPT on the currently active script must be rejected."""
+    sieve = sieve_setactive
     name = _script_name(cfg, "protected")
     previously_active = _active_script(sieve)
 
@@ -111,6 +118,7 @@ def test_active_script_cannot_be_deleted(sieve, cfg):
             warnings.warn("test_active_script_cannot_be_deleted cleanup: " + "; ".join(cleanup_errors))
 
 
+@pytest.mark.full
 def test_deletescript_removes_script(sieve, cfg):
     name = _script_name(cfg, "delete")
     sieve.put_script(name, VALID_SCRIPT)
@@ -119,11 +127,13 @@ def test_deletescript_removes_script(sieve, cfg):
     assert name not in names, f"Script {name!r} still listed after DELETESCRIPT"
 
 
+@pytest.mark.full
 def test_deletescript_unknown_script_rejected(sieve):
     with pytest.raises(ManageSieveError):
         sieve.delete_script(f"nonexistent-{uuid.uuid4().hex}")
 
 
+@pytest.mark.full
 def test_renamescript(sieve, cfg):
     old_name = _script_name(cfg, "rename-old")
     new_name = _script_name(cfg, "rename-new")
