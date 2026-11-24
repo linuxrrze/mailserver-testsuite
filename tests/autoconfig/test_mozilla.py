@@ -8,31 +8,12 @@ Two canonical URLs are tried in order:
   2. https://<domain>/.well-known/autoconfig/mail/config-v1.1.xml
 """
 
-import urllib.request
-import urllib.error
 import xml.etree.ElementTree as ET
 import pytest
 
-
-_AUTOCONFIG_TEMPLATES = [
-    "https://autoconfig.{domain}/mail/config-v1.1.xml",
-    "https://{domain}/.well-known/autoconfig/mail/config-v1.1.xml",
-    # Some servers serve clientConfig XML at the Microsoft Autodiscover path
-    "https://autodiscover.{domain}/autodiscover/autodiscover.xml",
-]
-
-
-def _fetch(domain, timeout=10):
-    """Return (url, body) for the first reachable autoconfig URL, or (None, None)."""
-    for tmpl in _AUTOCONFIG_TEMPLATES:
-        url = tmpl.format(domain=domain)
-        try:
-            with urllib.request.urlopen(url, timeout=timeout) as resp:
-                if resp.status == 200:
-                    return url, resp.read().decode("utf-8", errors="replace")
-        except (urllib.error.URLError, OSError):
-            continue
-    return None, None
+# Fetch/parse logic is shared with tests/autoconfig/test_consistency.py — see
+# lib/autoconfig.py. These aliases keep the test bodies below unchanged.
+from lib.autoconfig import MOZILLA_TEMPLATES as _AUTOCONFIG_TEMPLATES, fetch_mozilla as _fetch
 
 
 def _root(cfg):

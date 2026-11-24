@@ -120,8 +120,14 @@ lib/
                         (SNI) override registry
   probe.py            — raw-socket greeting probe + diagnosis for server-first
                         ports; PROXY-protocol backend-port reachability probe
+  autoconfig.py       — shared fetch/parse for Mozilla autoconfig, Microsoft
+                        Autodiscover and DNS SRV records, normalised to Endpoint
+                        records for the consistency tests (no pytest, no login)
 tests/
-  autoconfig/         — Mozilla clientConfig, Microsoft Autodiscover, DNS SRV records
+  autoconfig/         — Mozilla clientConfig, Microsoft Autodiscover, DNS SRV
+                        records, and test_consistency.py (the sources agree with
+                        each other and with config.yaml on host/port/socket);
+                        shared fetch/parse helpers live in lib/autoconfig.py
   dns/                — MX, SPF, DMARC, DKIM, PTR, MTA-STS, DANE/TLSA
   e2e/                — SMTP→IMAP round-trip, latency, Message-ID/DKIM/Received
                         headers, real client IP on the submission hop

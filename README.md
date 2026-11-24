@@ -20,7 +20,7 @@ A pytest-based black-box test suite for IMAP, SMTP and ManageSieve mail servers 
 | **Security** | LOGINDISABLED before STARTTLS, capability change after STARTTLS, ManageSieve cert expiry margin, brute-force protection (IMAP/SMTP/ManageSieve, proxy-aware) |
 | **Reverse proxy** | Greeting stall / HTTP-answer diagnosis on every server-first port, SNI hint for TLS-passthrough routing, PROXY-protocol backend port reachability (opt-in), idle-timeout survival (opt-in, slow) |
 | **DNS** | MX, SPF, DMARC, DKIM, PTR, MTA-STS, DANE/TLSA |
-| **Auto-configuration** | Mozilla Autoconfig XML (Thunderbird), Microsoft Autodiscover XML (Outlook), RFC 6186/8314 DNS SRV records |
+| **Auto-configuration** | Mozilla Autoconfig XML (Thunderbird), Microsoft Autodiscover XML (Outlook), RFC 6186/8314 DNS SRV records, and a cross-source consistency check (the sources agree with each other and with `config.yaml` on host/port/socket) |
 
 ## Requirements
 

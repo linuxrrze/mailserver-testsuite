@@ -5,29 +5,18 @@ Two canonical URLs are tried in order:
   2. https://<domain>/autodiscover/autodiscover.xml
 """
 
-import urllib.request
-import urllib.error
 import xml.etree.ElementTree as ET
 import pytest
 
-
-_AUTODISCOVER_TEMPLATES = [
-    "https://autodiscover.{domain}/autodiscover/autodiscover.xml",
-    "https://{domain}/autodiscover/autodiscover.xml",
-]
-
-
-def _fetch(domain, timeout=10):
-    """Return (url, body) for the first reachable Autodiscover URL."""
-    for tmpl in _AUTODISCOVER_TEMPLATES:
-        url = tmpl.format(domain=domain)
-        try:
-            with urllib.request.urlopen(url, timeout=timeout) as resp:
-                if resp.status == 200:
-                    return url, resp.read().decode("utf-8", errors="replace")
-        except (urllib.error.URLError, OSError):
-            continue
-    return None, None
+# Fetch/parse logic is shared with tests/autoconfig/test_consistency.py — see
+# lib/autoconfig.py. These aliases keep the test bodies below unchanged.
+from lib.autoconfig import (
+    AUTODISCOVER_TEMPLATES as _AUTODISCOVER_TEMPLATES,
+    fetch_autodiscover as _fetch,
+    find_all_local as _find_all,
+    child_text as _text,
+    local_tag,
+)
 
 
 def _root(cfg):
@@ -46,25 +35,11 @@ def _root(cfg):
 
 def _require_microsoft_format(root):
     """Skip if the endpoint returned Mozilla clientConfig instead of Autodiscover POX."""
-    tag = root.tag.split("}")[-1]
-    if tag == "clientConfig":
+    if local_tag(root.tag) == "clientConfig":
         pytest.skip(
             "Autodiscover URL returns Mozilla clientConfig XML, not Microsoft Autodiscover POX — "
             "Protocol-level checks are not applicable"
         )
-
-
-def _find_all(root, local):
-    """Find all elements whose local tag name matches, regardless of namespace."""
-    return [el for el in root.iter() if el.tag.split("}")[-1] == local]
-
-
-def _text(el, local):
-    """Get text of the first child whose local tag name matches."""
-    for child in el:
-        if child.tag.split("}")[-1] == local:
-            return child.text or ""
-    return ""
 
 
 def test_autodiscover_reachable(cfg):

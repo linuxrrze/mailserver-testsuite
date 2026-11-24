@@ -11,24 +11,14 @@ hard-coded defaults.  The relevant record names are:
 
 import pytest
 
-try:
-    import dns.resolver
-    HAS_DNSPYTHON = True
-except ImportError:
-    HAS_DNSPYTHON = False
+# Lookup logic is shared with tests/autoconfig/test_consistency.py — see
+# lib/autoconfig.py (srv_lookup handles NXDOMAIN/NoAnswer -> []).
+from lib.autoconfig import HAS_DNSPYTHON, srv_lookup as _srv
 
 pytestmark = pytest.mark.skipif(
     not HAS_DNSPYTHON,
     reason="dnspython not installed — run: pip install dnspython",
 )
-
-
-def _srv(name):
-    """Return answer list, or empty list when the name / record type doesn't exist."""
-    try:
-        return list(dns.resolver.resolve(name, "SRV"))
-    except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
-        return []
 
 
 # ---------------------------------------------------------------------------
