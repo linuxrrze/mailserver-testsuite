@@ -23,6 +23,73 @@ CONFIG_PATH = Path(os.environ.get("MAILTEST_CONFIG") or Path(__file__).parent / 
 _EXAMPLE_PATH = Path(__file__).parent / "config.yaml.example"
 
 
+# ---------------------------------------------------------------------------
+# Check-level selection (anonymous < read-only < full)
+# ---------------------------------------------------------------------------
+# Each test belongs to exactly one class, by the highest access it needs:
+#   anonymous  no credentials — TLS, DNS, autoconfig, greetings, unauth checks
+#   read_only  logs in but changes nothing and sends no mail
+#   full       sends mail or mutates server state (mailbox/sieve writes, IDLE)
+# --check-level picks a cumulative ceiling: read-only also runs anonymous, full
+# runs everything. Default is full (a bare `pytest` behaves as before). A test's
+# class comes from an explicit @pytest.mark.{anonymous,read_only,full}; if it has
+# none, it is read_only when it uses a fixture that logs in, else anonymous.
+# Mutating/sending tests MUST carry @pytest.mark.full so a read-only run never
+# changes a live server.
+
+_LEVELS = ("anonymous", "read-only", "full")           # increasing capability
+_LEVEL_ORDER = {name: i for i, name in enumerate(_LEVELS)}
+_MARKER_OF_LEVEL = {"anonymous": "anonymous", "read-only": "read_only", "full": "full"}
+_LEVEL_OF_MARKER = {v: k for k, v in _MARKER_OF_LEVEL.items()}
+
+# Fixtures that establish an authenticated session (=> at least read-only).
+# Config-only fixtures (cfg, primary_account, greeting_probe, ...) are NOT here:
+# anonymous tests legitimately read the username/host from config.
+_AUTHENTICATED_FIXTURES = frozenset(
+    {"imap", "imap_ssl", "imap_starttls", "smtp_submission", "smtp_smtps", "sieve"}
+)
+
+
+def pytest_addoption(parser):
+    parser.addoption(
+        "--check-level",
+        action="store",
+        default=None,
+        choices=list(_LEVELS),
+        help="Maximum check class to run, cumulative: anonymous < read-only < full. "
+        "Default: full (or the MAILTEST_CHECK_LEVEL env var). 'read-only' is safe "
+        "against a live server — it logs in but never sends mail or mutates.",
+    )
+
+
+def _tier_of(item) -> str:
+    """The check class of a test: explicit marker wins, else inferred from fixtures."""
+    for marker in ("full", "read_only", "anonymous"):   # most-privileged first
+        if item.get_closest_marker(marker):
+            return _LEVEL_OF_MARKER[marker]
+    if set(getattr(item, "fixturenames", ())) & _AUTHENTICATED_FIXTURES:
+        return "read-only"
+    return "anonymous"
+
+
+def pytest_collection_modifyitems(config, items):
+    level = (config.getoption("--check-level") or os.environ.get("MAILTEST_CHECK_LEVEL") or "full").lower()
+    if level not in _LEVEL_ORDER:
+        raise pytest.UsageError(
+            f"--check-level / MAILTEST_CHECK_LEVEL must be one of {', '.join(_LEVELS)}; got {level!r}"
+        )
+    ceiling = _LEVEL_ORDER[level]
+    selected, deselected = [], []
+    for item in items:
+        tier = _tier_of(item)
+        # Tag every item with its class so `-m read_only`, reports and -k compose.
+        item.add_marker(getattr(pytest.mark, _MARKER_OF_LEVEL[tier]))
+        (selected if _LEVEL_ORDER[tier] <= ceiling else deselected).append(item)
+    if deselected:
+        config.hook.pytest_deselected(items=deselected)
+        items[:] = selected
+
+
 @pytest.fixture(scope="session")
 def cfg():
     if not CONFIG_PATH.exists():
