@@ -1,6 +1,7 @@
 # There is no check-level key here: the check class to run is a CLI flag/env var,
 # not config. Use `pytest --check-level=anonymous|read-only|full` (or the
-# MAILTEST_CHECK_LEVEL env var); default is `full`. See the README / CLAUDE.md.
+# MAILTEST_CHECK_LEVEL env var); default is `read-only` (safe against a live
+# server — never sends or mutates). Pass `full` to include those. See CLAUDE.md.
 
 imap:
   host: mail.example.com

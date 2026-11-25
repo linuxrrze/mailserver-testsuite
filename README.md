@@ -63,19 +63,20 @@ cumulative ceiling (anonymous < read-only < full):
 
 ```bash
 pytest --check-level=anonymous   # no login at all: TLS, DNS, autoconfig, greetings
-pytest --check-level=read-only   # anonymous + logins that ONLY read (never send or mutate)
-pytest --check-level=full        # everything (DEFAULT — a bare `pytest` is unchanged)
+pytest --check-level=read-only   # anonymous + logins that ONLY read (DEFAULT — a bare `pytest`)
+pytest --check-level=full        # everything, including tests that send mail or mutate state
 ```
 
 The level can also be set with the `MAILTEST_CHECK_LEVEL` environment variable.
 
 | Level | What it does | Safe on a production account? |
 |---|---|---|
-| `anonymous` | No credentials — TLS, DNS, autoconfig, greetings, unauth/plaintext rejection, brute-force wrong-password probes | Yes |
+| `anonymous` | No credentials — TLS, DNS, autoconfig, greetings, unauth/plaintext rejection | Yes |
 | `read-only` | Logs in but only reads (LIST, SELECT/EXAMINE, FETCH, SEARCH, CAPABILITY, GETQUOTA, GETSCRIPT, CHECKSCRIPT, NOOP, IDLE) | Yes — never sends mail or changes mailbox/Sieve state |
-| `full` | Sends mail and mutates state (APPEND/STORE/EXPUNGE/COPY, folder create/rename/delete, SMTP delivery, Sieve PUTSCRIPT/SETACTIVE) | Use a test account |
+| `full` | Sends mail and mutates state (APPEND/STORE/EXPUNGE/COPY, folder create/rename/delete, SMTP delivery, Sieve PUTSCRIPT/SETACTIVE, brute-force wrong-password probes) | Use a test account |
 
-`full` is the default, so `pytest` with no flag behaves exactly as before.
+`read-only` is the default, so a bare `pytest` is safe on a production account;
+pass `--check-level=full` to include the sending/mutating tests.
 
 ## Running specific subsets
 

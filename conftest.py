@@ -31,7 +31,8 @@ _EXAMPLE_PATH = Path(__file__).parent / "config.yaml.example"
 #   read_only  logs in but changes nothing and sends no mail
 #   full       sends mail or mutates server state (mailbox/sieve writes, IDLE)
 # --check-level picks a cumulative ceiling: read-only also runs anonymous, full
-# runs everything. Default is full (a bare `pytest` behaves as before). A test's
+# runs everything. Default is read-only, so a bare `pytest` never sends mail or
+# mutates a live server; pass --check-level=full to include those. A test's
 # class comes from an explicit @pytest.mark.{anonymous,read_only,full}; if it has
 # none, it is read_only when it uses a fixture that logs in, else anonymous.
 # Mutating/sending tests MUST carry @pytest.mark.full so a read-only run never
@@ -57,8 +58,9 @@ def pytest_addoption(parser):
         default=None,
         choices=list(_LEVELS),
         help="Maximum check class to run, cumulative: anonymous < read-only < full. "
-        "Default: full (or the MAILTEST_CHECK_LEVEL env var). 'read-only' is safe "
-        "against a live server — it logs in but never sends mail or mutates.",
+        "Default: read-only (or the MAILTEST_CHECK_LEVEL env var) — safe against a "
+        "live server: it logs in but never sends mail or mutates. Pass 'full' to "
+        "also run sending/mutating tests.",
     )
 
 
@@ -73,7 +75,7 @@ def _tier_of(item) -> str:
 
 
 def pytest_collection_modifyitems(config, items):
-    level = (config.getoption("--check-level") or os.environ.get("MAILTEST_CHECK_LEVEL") or "full").lower()
+    level = (config.getoption("--check-level") or os.environ.get("MAILTEST_CHECK_LEVEL") or "read-only").lower()
     if level not in _LEVEL_ORDER:
         raise pytest.UsageError(
             f"--check-level / MAILTEST_CHECK_LEVEL must be one of {', '.join(_LEVELS)}; got {level!r}"

@@ -49,6 +49,7 @@ def _first_attempt_failed(proto, e):
     )
 
 
+@pytest.mark.full
 def test_imap_wrong_password_always_rejected(cfg, primary_account):
     """The server must never accept a wrong password regardless of attempt count."""
     attempts = cfg.get("security", {}).get("brute_force_probe_attempts", 10)
@@ -72,6 +73,7 @@ def test_imap_wrong_password_always_rejected(cfg, primary_account):
             logout(imap)
 
 
+@pytest.mark.full
 def test_imap_repeated_failures_trigger_protection(cfg, primary_account):
     """Repeated IMAP login failures must eventually trigger rate limiting or a block."""
     attempts = cfg.get("security", {}).get("brute_force_probe_attempts", 10)
@@ -101,6 +103,7 @@ def test_imap_repeated_failures_trigger_protection(cfg, primary_account):
         )
 
 
+@pytest.mark.full
 def test_smtp_wrong_password_always_rejected(cfg, primary_account):
     """SMTP AUTH must never accept a wrong password regardless of attempt count."""
     attempts = cfg.get("security", {}).get("brute_force_probe_attempts", 5)
@@ -128,6 +131,7 @@ def test_smtp_wrong_password_always_rejected(cfg, primary_account):
         pass
 
 
+@pytest.mark.full
 def test_smtp_repeated_failures_trigger_protection(cfg, primary_account):
     """Multiple failed SMTP AUTH attempts must cause disconnect, 454, or a block on reconnect."""
     attempts = cfg.get("security", {}).get("brute_force_probe_attempts", 5)
@@ -177,6 +181,7 @@ def test_smtp_repeated_failures_trigger_protection(cfg, primary_account):
         )
 
 
+@pytest.mark.full
 def test_managesieve_wrong_password_always_rejected(cfg, sieve_connect, primary_account):
     """The server must never accept a wrong password regardless of attempt count."""
     attempts = cfg.get("security", {}).get("brute_force_probe_attempts", 10)
@@ -197,6 +202,7 @@ def test_managesieve_wrong_password_always_rejected(cfg, sieve_connect, primary_
             client.logout()
 
 
+@pytest.mark.full
 def test_managesieve_repeated_failures_trigger_protection(cfg, sieve_connect, primary_account):
     """Repeated ManageSieve AUTHENTICATE failures must eventually trigger rate limiting or a block."""
     attempts = cfg.get("security", {}).get("brute_force_probe_attempts", 10)

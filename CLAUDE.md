@@ -7,7 +7,7 @@ with real credentials and verifies correctness, security, and deliverability.
 ## Running the tests
 
 ```bash
-pytest                  # full suite (verbose, short tracebacks via pytest.ini)
+pytest                  # read-only suite — safe default (verbose, short tracebacks via pytest.ini)
 pytest tests/imap/      # one area
 pytest -x -s            # stop on first failure, live output
 pytest -m "not slow"    # skip opt-in slow checks (proxy idle-timeout probe)
@@ -22,26 +22,29 @@ Every test belongs to exactly one class, by the highest access it needs:
 
 - **anonymous** — needs no credentials: TLS, DNS, autoconfig, greetings,
   command-channel, unauthenticated-relay rejection, plaintext-auth rejection,
-  brute-force wrong-password probes, pre-login capability advertisement.
+  pre-login capability advertisement.
 - **read_only** — logs in but only reads and changes nothing: LOGIN,
   CAPABILITY, LIST/LSUB, SELECT/EXAMINE, FETCH, SEARCH, NAMESPACE,
   GETQUOTA(ROOT), LISTSCRIPTS, GETSCRIPT, CHECKSCRIPT, HAVESPACE, NOOP, IDLE.
 - **full** — sends mail or mutates server state: SMTP delivery, e2e
   send-and-fetch, IMAP APPEND/STORE/EXPUNGE/COPY/CREATE/DELETE/RENAME/
-  SUBSCRIBE, and ManageSieve PUTSCRIPT/DELETESCRIPT/RENAMESCRIPT/SETACTIVE.
+  SUBSCRIBE, ManageSieve PUTSCRIPT/DELETESCRIPT/RENAMESCRIPT/SETACTIVE, and the
+  brute-force wrong-password probes (repeated bad logins can trip rate limits or
+  lock out the account).
 
 Select a cumulative ceiling with `--check-level` (or the `MAILTEST_CHECK_LEVEL`
 env var); it is cumulative (anonymous < read-only < full):
 
 ```bash
 pytest --check-level=anonymous   # no login at all — TLS/DNS/autoconfig/greetings
-pytest --check-level=read-only   # anonymous + logins that only read; never sends or mutates
-pytest --check-level=full        # everything (DEFAULT — a bare `pytest` is unchanged)
+pytest --check-level=read-only   # anonymous + logins that only read (DEFAULT — a bare `pytest`)
+pytest --check-level=full        # everything, including tests that send mail or mutate state
 ```
 
 **Safety guarantee:** a `--check-level=read-only` run never sends mail and
 never changes mailbox or Sieve state, so it is safe against a live production
-account. `full` is the default so existing invocations behave as before.
+account. It is the default, so a bare `pytest` is safe out of the box; pass
+`--check-level=full` to opt into the sending/mutating tests.
 
 A test's class comes from an explicit `@pytest.mark.{anonymous,read_only,full}`;
 with none, it is `read_only` if it uses a login fixture (`imap`, `imap_ssl`,
