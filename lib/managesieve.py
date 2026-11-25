@@ -222,9 +222,17 @@ class ManageSieveClient:
         self.send("STARTTLS")
         self._expect_ok()
         self._wrap_tls(ssl_ctx)
-        # RFC 5804 §2.2: capabilities advertised before negotiation are
-        # discarded; the client MUST issue CAPABILITY again after STARTTLS.
-        self.capability()
+        # RFC 5804 §2.2: immediately after the TLS handshake the server
+        # *automatically* re-sends its capability list (ending in OK) over the
+        # encrypted channel. Read that unsolicited response — do NOT also send
+        # an explicit CAPABILITY: that would leave a second capability response
+        # in the buffer and desynchronise every subsequent command by one reply
+        # (a wrong-password AUTHENTICATE would then read the stale OK and look
+        # like it succeeded).
+        status, code, message, lines = self.read_response()
+        if status != "OK":
+            raise ManageSieveError(f"Post-STARTTLS capability failed: {status} {message}", code)
+        self.capabilities = self._parse_capability_lines(lines)
 
     # -- AUTHENTICATE (SASL PLAIN) -------------------------------------------
 
