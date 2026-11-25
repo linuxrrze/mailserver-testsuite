@@ -140,24 +140,67 @@ def fetch_autodiscover(domain, timeout=10) -> Tuple[Optional[str], Optional[str]
 # Parsers -> normalised endpoints
 # ---------------------------------------------------------------------------
 
-def mozilla_endpoints(body: str) -> List[Endpoint]:
-    """Normalise Mozilla clientConfig XML into IMAP incoming + SMTP outgoing endpoints."""
+def _provider_domains(provider) -> set:
+    """The domains a single <emailProvider> claims: its <domain> children + id attr."""
+    doms = set()
+    pid = (provider.get("id") or "").strip().lower()
+    if pid:
+        doms.add(pid)
+    for child in provider:
+        if local_tag(child.tag) == "domain" and (child.text or "").strip():
+            doms.add(child.text.strip().lower())
+    return doms
+
+
+def _providers_for(root, domain: Optional[str]):
+    """The <emailProvider> blocks relevant to `domain`.
+
+    A Mozilla clientConfig may bundle several <emailProvider> blocks, each for a
+    different domain and each with its own servers/ports (e.g. a main domain on
+    993/465 and a sub-domain on alternate ports). Flattening them all together
+    conflates unrelated endpoints, so when a domain is given we keep only the
+    provider(s) that advertise it. We fall back to every provider when none
+    matches (unusual layout) or when the file has no <emailProvider> wrapper.
+    """
+    providers = find_all_local(root, "emailProvider")
+    if not providers:
+        return [root]
+    if domain:
+        d = domain.strip().lower()
+        matched = [p for p in providers if d in _provider_domains(p)]
+        if matched:
+            return matched
+    return providers
+
+
+def mozilla_endpoints(body: str, domain: Optional[str] = None) -> List[Endpoint]:
+    """Normalise Mozilla clientConfig XML into IMAP incoming + SMTP outgoing endpoints.
+
+    When `domain` is given, only the <emailProvider> block(s) advertising that
+    domain are parsed, so a multi-provider file (several domains, each with its
+    own ports) is not conflated into one set of endpoints.
+    """
     root = ET.fromstring(body)
     eps: List[Endpoint] = []
-    for s in root.findall(".//incomingServer[@type='imap']"):
-        eps.append(Endpoint(
-            "mozilla", "incoming", "imap",
-            normalize_socket(s.findtext("socketType")),
-            (s.findtext("hostname") or "").strip() or None,
-            _to_int(s.findtext("port")),
-        ))
-    for s in root.findall(".//outgoingServer[@type='smtp']"):
-        eps.append(Endpoint(
-            "mozilla", "outgoing", "smtp",
-            normalize_socket(s.findtext("socketType")),
-            (s.findtext("hostname") or "").strip() or None,
-            _to_int(s.findtext("port")),
-        ))
+    for provider in _providers_for(root, domain):
+        for s in find_all_local(provider, "incomingServer"):
+            if (s.get("type") or "").strip().lower() != "imap":
+                continue
+            eps.append(Endpoint(
+                "mozilla", "incoming", "imap",
+                normalize_socket(child_text(s, "socketType")),
+                child_text(s, "hostname").strip() or None,
+                _to_int(child_text(s, "port")),
+            ))
+        for s in find_all_local(provider, "outgoingServer"):
+            if (s.get("type") or "").strip().lower() != "smtp":
+                continue
+            eps.append(Endpoint(
+                "mozilla", "outgoing", "smtp",
+                normalize_socket(child_text(s, "socketType")),
+                child_text(s, "hostname").strip() or None,
+                _to_int(child_text(s, "port")),
+            ))
     return eps
 
 

@@ -52,7 +52,7 @@ def _mozilla(domain):
     if body is None:
         return None
     try:
-        eps = mozilla_endpoints(body)
+        eps = mozilla_endpoints(body, domain)
     except Exception:
         return None
     return eps or None
